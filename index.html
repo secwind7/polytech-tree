@@ -21,7 +21,17 @@
     <button id="btnReset">⟲ 重置视角</button>
   </div>
 
-  <div id="hint">拖拽旋转 · 滚轮缩放 · 右键平移 · 悬停节点查看信息 · 漫游中按 Esc 退出</div>
+  <div id="search" class="panel">
+    <div class="search-bar">
+      <span class="search-icon">⌕</span>
+      <input id="searchInput" type="text" placeholder="搜索科技名称 / 别名…" autocomplete="off" spellcheck="false" />
+      <span id="searchCount" class="search-count"></span>
+      <button id="searchClose" class="search-close" title="关闭 (Esc)">✕</button>
+    </div>
+    <div id="searchResults" class="search-results"></div>
+  </div>
+
+  <div id="hint">拖拽旋转 · 滚轮缩放 · 右键平移 · 悬停节点查看信息 · Ctrl+F 搜索定位 · 空格 冻结/解冻 · 漫游中按 Esc 退出</div>
 
   <div id="eraCaption"></div>
   <div id="tooltip"></div>

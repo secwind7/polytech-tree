@@ -130,6 +130,79 @@ body {
   color: #fff;
 }
 
+/* ───── 搜索定位（Ctrl+F） ───── */
+#search {
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  flex-direction: column;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  z-index: 30;
+}
+#search.open { display: flex; }
+.search-bar { display: flex; align-items: center; gap: 8px; }
+.search-icon { opacity: 0.6; font-size: 15px; }
+#searchInput {
+  flex: 1;
+  min-width: 0;
+  background: rgba(20, 30, 60, 0.6);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  outline: none;
+}
+#searchInput:focus { border-color: #5a8cff; }
+.search-count {
+  font-size: 11px;
+  opacity: 0.6;
+  min-width: 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.search-close {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+  opacity: 0.7;
+  padding: 2px 6px;
+  border-radius: 5px;
+}
+.search-close:hover { opacity: 1; background: rgba(90, 140, 255, 0.18); }
+.search-results {
+  margin-top: 6px;
+  max-height: 264px;
+  overflow-y: auto;
+  display: none;
+}
+.search-results.show { display: block; }
+.search-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.search-item:hover, .search-item.active { background: rgba(90, 140, 255, 0.18); }
+.search-item .si-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+  box-shadow: 0 0 6px currentColor;
+}
+.search-item .si-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-item .si-dim { font-size: 10px; opacity: 0.55; flex: none; }
+
 #hint {
   position: fixed;
   bottom: 20px;
@@ -184,6 +257,8 @@ body {
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
 }
 #tooltip.show { opacity: 1; }
+/* 冻结模式（空格开关）：信息卡可交互，方便点击维基链接 */
+body.frozen #tooltip { pointer-events: auto; }
 #tooltip .tt-name { font-size: 14px; font-weight: bold; color: #fff; }
 #tooltip .tt-dim { opacity: 0.65; }
 #tooltip .tt-desc {

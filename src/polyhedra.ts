@@ -38,6 +38,7 @@ export class PolyhedraField {
   meshes: THREE.InstancedMesh[] = []
   private metas: InstanceMeta[][] = []
   private highlightIdx: number | null = null
+  private focusIdx: number | null = null
   private colors: THREE.Color[]
   private tmp = new THREE.Object3D()
   private white = new THREE.Color(0xffffff)
@@ -152,7 +153,7 @@ export class PolyhedraField {
 
   private colorOf(nodeIdx: number): THREE.Color {
     const base = this.colors[this.byIdx[nodeIdx].node.category]
-    if (this.highlightIdx === nodeIdx) return this.white
+    if (this.highlightIdx === nodeIdx || this.focusIdx === nodeIdx) return this.white
     if (this.keep && !this.keep(nodeIdx)) return base.clone().lerp(this.dim, 0.9)
     return base
   }
@@ -162,6 +163,16 @@ export class PolyhedraField {
     if (this.highlightIdx === nodeIdx) return
     const prev = this.highlightIdx
     this.highlightIdx = nodeIdx
+    for (const idx of [prev, nodeIdx]) {
+      if (idx !== null && idx !== undefined) this.repaint(idx)
+    }
+  }
+
+  /** 搜索聚焦高亮：与悬停高亮互不干扰，悬停移开后仍保持 */
+  setFocus(nodeIdx: number | null) {
+    if (this.focusIdx === nodeIdx) return
+    const prev = this.focusIdx
+    this.focusIdx = nodeIdx
     for (const idx of [prev, nodeIdx]) {
       if (idx !== null && idx !== undefined) this.repaint(idx)
     }

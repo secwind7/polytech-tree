@@ -26,6 +26,17 @@ export class CameraRig {
   private lookTarget = new THREE.Vector3()
   private pos = new THREE.Vector3()
   private up = new THREE.Vector3(0, 1, 0)
+  // 搜索聚焦动画：从当前位姿平滑移到目标节点正前方
+  private focusing = false
+  private focusT = 0
+  private focusDur = 1.1
+  private focusFromPos = new THREE.Vector3()
+  private focusFromTarget = new THREE.Vector3()
+  private focusToPos = new THREE.Vector3()
+  private focusToTarget = new THREE.Vector3()
+  // 冻结（空格开关）：相机与节点全停，方便把鼠标移到信息卡上点链接
+  private frozen = false
+  private autoRotateBeforeFreeze = false
 
   constructor(
     camera: THREE.PerspectiveCamera, dom: HTMLElement,
@@ -52,9 +63,10 @@ export class CameraRig {
     window.addEventListener('keydown', e => {
       if (e.key === 'Escape' && this.mode === 'tour') this.stopTour()
     })
-    // 点击画布中断漫游
+    // 点击画布中断漫游 / 聚焦动画
     dom.addEventListener('pointerdown', () => {
       if (this.mode === 'tour') this.stopTour()
+      if (this.focusing) this.cancelFocus()
     })
   }
 
@@ -89,7 +101,66 @@ export class CameraRig {
     this.onTourEnd?.()
   }
 
+  /** 冻结/解冻（空格切换）：冻结时暂停相机运动（自动旋转、漫游、聚焦动画） */
+  setFrozen(frozen: boolean) {
+    if (this.frozen === frozen) return
+    this.frozen = frozen
+    if (frozen) {
+      this.autoRotateBeforeFreeze = this.controls.autoRotate
+      this.controls.autoRotate = false
+    } else {
+      this.controls.autoRotate = this.autoRotateBeforeFreeze
+    }
+  }
+
+  /** 搜索聚焦：把相机平滑移到目标节点正前方，节点位于屏幕中心 */
+  focusOn(position: THREE.Vector3, distance: number) {
+    this.stopTour()
+    this.controls.autoRotate = false
+    // 沿当前视线方向靠近：方向不变，只平移 + 收拢，视觉上最自然
+    const dir = new THREE.Vector3().subVectors(this.controls.target, this.camera.position)
+    if (dir.lengthSq() < 1e-6) dir.set(1, 0.35, 1).normalize()
+    else dir.normalize()
+    this.focusFromPos.copy(this.camera.position)
+    this.focusFromTarget.copy(this.controls.target)
+    this.focusToTarget.copy(position)
+    this.focusToPos.copy(position).addScaledVector(dir, -distance)
+    this.focusT = 0
+    this.focusing = true
+    this.controls.enabled = false
+  }
+
+  /** 用户开始拖拽时立即结束聚焦动画，落到目标位姿 */
+  private cancelFocus() {
+    if (!this.focusing) return
+    this.focusing = false
+    this.camera.position.copy(this.focusToPos)
+    this.controls.target.copy(this.focusToTarget)
+    this.camera.lookAt(this.controls.target)
+    this.controls.enabled = true
+    this.controls.update()
+  }
+
+  private updateFocus(dt: number) {
+    this.focusT += dt / this.focusDur
+    const k = Math.min(1, this.focusT)
+    const s = k * k * (3 - 2 * k) // smoothstep
+    this.camera.position.lerpVectors(this.focusFromPos, this.focusToPos, s)
+    this.controls.target.lerpVectors(this.focusFromTarget, this.focusToTarget, s)
+    this.camera.lookAt(this.controls.target)
+    if (k >= 1) {
+      this.focusing = false
+      this.controls.enabled = true
+      this.controls.update()
+    }
+  }
+
   update(dt: number) {
+    if (this.frozen) return
+    if (this.focusing) {
+      this.updateFocus(dt)
+      return
+    }
     if (this.mode === 'orbit') {
       this.controls.update()
       return

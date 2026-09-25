@@ -59,6 +59,7 @@ export interface TechNode {
   name: string          // 中文名，缺失时回退英文（不向玩家暴露内部 id）
   nameEn: string
   wikiEn: string        // 英文维基条目标题：desc 派生文字的署名对象（见 LICENSE-data.md §2）
+  aliases: string[]     // 别名/曾用名（搜索定位用）
   year: number
   yearBasis: string     // 年代依据（规范 §6），exact 表示"批次给了确切年份"而非已逐条核对
   yearNote: string
@@ -76,6 +77,7 @@ export const TECHS: TechNode[] = techs.map(t => ({
   name: t.name || t.nameEn, // 中文缺失回退英文
   nameEn: t.nameEn,
   wikiEn: t.wikiEn ?? '',
+  aliases: t.aliases ?? [],
   year: t.year,
   yearBasis: t.year_basis ?? 'exact',
   yearNote: t.year_note ?? '',

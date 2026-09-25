@@ -165,6 +165,7 @@ function setTouring(on: boolean) {
   if (on) {
     hoverIdx = null
     shownEra = -2
+    field.setFocus(null)
     field.beginTour(plan.revealAt, 0)
     edges.beginTour()
   } else {
@@ -213,6 +214,33 @@ function yearText(n: TechNode): string {
   return `${b.approx ? '约' : ''}${core}${b.mark ? `（${b.mark}）` : ''}`
 }
 
+/** 在指定屏幕坐标显示节点信息卡（悬停与搜索定位共用） */
+function showTooltip(idx: number, x: number, y: number) {
+  const n = placed[idx].node
+  // 前置科技：显示名称（最多 4 个，避免溢出）
+  const prereqNames = n.prereqs
+    .map(id => TECH_BY_ID.get(id)?.name ?? '')
+    .filter(Boolean)
+    .slice(0, 4)
+    .join('、')
+  tooltip.innerHTML = `
+    <div class="tt-name">${n.name}</div>
+    <div class="tt-dim">${n.nameEn !== n.name ? n.nameEn + ' · ' : ''}${yearText(n)}</div>
+    <div class="tt-dim">${ERA_INFO[n.era].name} · ${CATEGORY_NAMES[n.category]}${n.kind ? ' · ' + n.kind : ''}</div>
+    <div class="tt-dim">重要度 ${'★'.repeat(6 - n.importance)}${'☆'.repeat(n.importance - 1)}　${facesOf(n.importance)} 面</div>
+    ${prereqNames ? `<div class="tt-dim">前置：${prereqNames}</div>` : ''}
+    ${n.desc ? `<div class="tt-desc">${n.desc}</div>` : ''}
+    ${n.wikiEn
+      ? `<div class="tt-src">摘要参考英文维基百科条目
+          <a href="https://en.wikipedia.org/wiki/${encodeURIComponent(n.wikiEn)}" target="_blank" rel="noopener">${n.wikiEn}</a>
+          （CC BY-SA 4.0）</div>`
+      : ''}
+  `
+  tooltip.style.left = `${x}px`
+  tooltip.style.top = `${y}px`
+  tooltip.classList.add('show')
+}
+
 renderer.domElement.addEventListener('pointermove', e => {
   if (rig.mode === 'tour') return // 漫游中相机在动，悬停无意义
   const rect = renderer.domElement.getBoundingClientRect()
@@ -228,36 +256,163 @@ renderer.domElement.addEventListener('pointermove', e => {
     const idx = field.nodeIndexAt(h.object, h.instanceId!)
     if (idx !== null) {
       hoverIdx = idx
-      const n = placed[idx].node
-      // 前置科技：显示名称（最多 4 个，避免溢出）
-      const prereqNames = n.prereqs
-        .map(id => TECH_BY_ID.get(id)?.name ?? '')
-        .filter(Boolean)
-        .slice(0, 4)
-        .join('、')
-      tooltip.innerHTML = `
-        <div class="tt-name">${n.name}</div>
-        <div class="tt-dim">${n.nameEn !== n.name ? n.nameEn + ' · ' : ''}${yearText(n)}</div>
-        <div class="tt-dim">${ERA_INFO[n.era].name} · ${CATEGORY_NAMES[n.category]}${n.kind ? ' · ' + n.kind : ''}</div>
-        <div class="tt-dim">重要度 ${'★'.repeat(6 - n.importance)}${'☆'.repeat(n.importance - 1)}　${facesOf(n.importance)} 面</div>
-        ${prereqNames ? `<div class="tt-dim">前置：${prereqNames}</div>` : ''}
-        ${n.desc ? `<div class="tt-desc">${n.desc}</div>` : ''}
-        ${n.wikiEn
-          ? `<div class="tt-src">摘要参考英文维基百科条目
-              <a href="https://en.wikipedia.org/wiki/${encodeURIComponent(n.wikiEn)}" target="_blank" rel="noopener">${n.wikiEn}</a>
-              （CC BY-SA 4.0）</div>`
-          : ''}
-      `
-      tooltip.style.left = `${e.clientX + 16}px`
-      tooltip.style.top = `${e.clientY + 12}px`
-      tooltip.classList.add('show')
+      if (frozen && tooltip.classList.contains('show')) {
+        // 冻结且信息卡已显示：保持固定，方便把鼠标移过去点击链接
+        renderer.domElement.style.cursor = 'pointer'
+        return
+      }
+      showTooltip(idx, e.clientX + 16, e.clientY + 12)
       renderer.domElement.style.cursor = 'pointer'
       return
     }
   }
+  if (frozen) {
+    // 冻结：移开节点也保持信息卡，方便把鼠标移过去点击链接
+    hoverIdx = null
+    renderer.domElement.style.cursor = ''
+    return
+  }
   hoverIdx = null
   tooltip.classList.remove('show')
   renderer.domElement.style.cursor = ''
+})
+
+// ───── 搜索定位（Ctrl+F） ─────
+const searchBox = document.getElementById('search')!
+const searchInput = document.getElementById('searchInput') as HTMLInputElement
+const searchCount = document.getElementById('searchCount')!
+const searchResults = document.getElementById('searchResults')!
+const searchClose = document.getElementById('searchClose') as HTMLButtonElement
+
+interface SearchEntry { idx: number; name: string; nameEn: string; aliases: string[]; score: number }
+const searchIndex: SearchEntry[] = placed.map((p, idx) => ({
+  idx,
+  name: p.node.name,
+  nameEn: p.node.nameEn,
+  aliases: p.node.aliases,
+  score: Infinity,
+}))
+
+let currentResults: SearchEntry[] = []
+let searchActive = -1
+
+/** 转义 HTML 特殊字符：节点名可能含 & < > 等，避免破坏结果条目的结构 */
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
+}
+
+/** 按名称 / 英文名 / 别名做不区分大小写的子串匹配，精确 > 前缀 > 包含 */
+function runSearch() {
+  const q = searchInput.value.trim()
+  currentResults = []
+  if (q) {
+    const lower = q.toLowerCase()
+    for (const e of searchIndex) {
+      let best = Infinity
+      for (const f of [e.name, e.nameEn, ...e.aliases]) {
+        const fl = f.toLowerCase()
+        if (fl === lower) best = Math.min(best, 0)
+        else if (fl.startsWith(lower)) best = Math.min(best, 1)
+        else if (fl.includes(lower)) best = Math.min(best, 2)
+      }
+      if (best < Infinity) {
+        e.score = best
+        currentResults.push(e)
+      }
+    }
+    currentResults.sort((a, b) =>
+      a.score - b.score ||
+      placed[a.idx].node.importance - placed[b.idx].node.importance ||
+      a.name.localeCompare(b.name))
+  }
+  searchActive = currentResults.length ? 0 : -1
+  renderResults()
+}
+
+function renderResults() {
+  searchCount.textContent = currentResults.length ? `${currentResults.length} 项` : ''
+  if (currentResults.length === 0) {
+    searchResults.classList.remove('show')
+    searchResults.innerHTML = ''
+    return
+  }
+  searchActive = Math.min(searchActive, currentResults.length - 1)
+  searchResults.classList.add('show')
+  searchResults.innerHTML = currentResults.map((r, i) => `
+    <div class="search-item ${i === searchActive ? 'active' : ''}" data-i="${i}">
+      <span class="si-dot" style="background:${CATEGORY_HEX[placed[r.idx].node.category]}"></span>
+      <span class="si-name">${escapeHtml(r.name)}</span>
+      <span class="si-dim">${ERA_INFO[placed[r.idx].node.era].name}</span>
+    </div>`).join('')
+}
+
+function openSearch() {
+  searchBox.classList.add('open')
+  searchInput.focus()
+  searchInput.select()
+  runSearch()
+}
+
+function closeSearch() {
+  searchBox.classList.remove('open')
+  searchResults.classList.remove('show')
+  searchResults.innerHTML = ''
+  searchCount.textContent = ''
+  currentResults = []
+  searchActive = -1
+  field.setFocus(null)
+  tooltip.classList.remove('show')
+  searchInput.blur()
+}
+
+/** 聚焦到某个节点：摄像机对准 + 高亮 + 信息卡 */
+function focusNode(idx: number) {
+  const p = placed[idx]
+  // 视距按重要度缩放：基石更大，稍微拉远看全；长尾节点小，靠近些
+  const dist = 12 + (6 - p.node.importance) * 2
+  rig.focusOn(p.position, dist)
+  closeSearch() // 收起搜索框：输入框持有焦点会吞掉空格键，收起后即可用空格冻结
+  field.setFocus(idx)
+  // 信息卡固定在标题面板下方，不跟随鼠标，免得挡住正被观察的节点
+  showTooltip(idx, 24, 116)
+}
+
+searchInput.addEventListener('input', runSearch)
+searchInput.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    closeSearch()
+  } else if (e.key === 'Enter') {
+    e.preventDefault()
+    if (currentResults.length) focusNode(currentResults[Math.max(0, searchActive)].idx)
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    if (currentResults.length) {
+      searchActive = (searchActive + 1) % currentResults.length
+      renderResults()
+    }
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    if (currentResults.length) {
+      searchActive = (searchActive - 1 + currentResults.length) % currentResults.length
+      renderResults()
+    }
+  }
+})
+searchResults.addEventListener('click', e => {
+  const item = (e.target as HTMLElement).closest('.search-item')
+  if (!item) return
+  focusNode(currentResults[Number((item as HTMLElement).dataset.i)].idx)
+})
+searchClose.addEventListener('click', closeSearch)
+
+// Ctrl+F / Cmd+F 打开搜索（阻止浏览器默认查找）
+window.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+    e.preventDefault()
+    openSearch()
+  }
 })
 
 // ───── 自适应窗口 ─────
@@ -275,10 +430,39 @@ const clock = new THREE.Clock()
 const nameIdx = new Int32Array(placed.length)
 const nameAlpha = new Float32Array(placed.length)
 
+// ───── 冻结模式（空格开关）：节点与相机全停，方便把鼠标移到信息卡上点链接 ─────
+let frozen = false
+let frozenTime = 0
+
+/** 焦点是否落在输入控件上：是则空格交给输入框，不做冻结开关 */
+function isTypingTarget(el: Element | null): boolean {
+  if (!el) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || (el as HTMLElement).isContentEditable
+}
+
+window.addEventListener('keydown', e => {
+  if (e.code !== 'Space' || e.repeat) return
+  if (isTypingTarget(document.activeElement)) return // 搜索框等输入场景不冻结
+  e.preventDefault()
+  if (frozen) {
+    // 再按一次：解除冻结
+    frozen = false
+    rig.setFrozen(false)
+    document.body.classList.remove('frozen')
+  } else {
+    // 按一次：进入冻结
+    frozen = true
+    frozenTime = clock.elapsedTime
+    rig.setFrozen(true)
+    document.body.classList.add('frozen')
+  }
+})
+
 function loop() {
   requestAnimationFrame(loop)
   const dt = Math.min(clock.getDelta(), 0.1)
-  const time = clock.elapsedTime
+  const time = frozen ? frozenTime : clock.elapsedTime
 
   rig.update(dt)
   if (rig.mode === 'tour') {
