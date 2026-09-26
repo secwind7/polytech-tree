@@ -38,6 +38,8 @@ export class PolyhedraField {
   meshes: THREE.InstancedMesh[] = []
   private metas: InstanceMeta[][] = []
   private highlightIdx: number | null = null
+  private selectedIdx: number | null = null
+  private treeNodes: Set<number> | null = null
   private colors: THREE.Color[]
   private tmp = new THREE.Object3D()
   private white = new THREE.Color(0xffffff)
@@ -143,6 +145,17 @@ export class PolyhedraField {
   /** 设置/清除筛选（传 null 显示全部）；只改颜色，节点位置与大小不动 */
   setFilter(keep: ((nodeIdx: number) => boolean) | null) {
     this.keep = keep
+    this.recolorAll()
+  }
+
+  /** 锁定目标与全部前置节点；目标保留白色，前置节点提亮，其余节点退到背景 */
+  setTreeHighlight(target: number | null, nodes: Set<number> | null) {
+    this.selectedIdx = target
+    this.treeNodes = nodes
+    this.recolorAll()
+  }
+
+  private recolorAll() {
     for (let lv = 0; lv < this.meshes.length; lv++) {
       const mesh = this.meshes[lv]
       this.metas[lv].forEach((m, i) => mesh.setColorAt(i, this.colorOf(m.nodeIdx)))
@@ -152,7 +165,12 @@ export class PolyhedraField {
 
   private colorOf(nodeIdx: number): THREE.Color {
     const base = this.colors[this.byIdx[nodeIdx].node.category]
-    if (this.highlightIdx === nodeIdx) return this.white
+    if (this.highlightIdx === nodeIdx || this.selectedIdx === nodeIdx) return this.white
+    if (this.treeNodes) {
+      return this.treeNodes.has(nodeIdx)
+        ? base.clone().lerp(this.white, 0.5)
+        : base.clone().lerp(this.dim, 0.75)
+    }
     if (this.keep && !this.keep(nodeIdx)) return base.clone().lerp(this.dim, 0.9)
     return base
   }

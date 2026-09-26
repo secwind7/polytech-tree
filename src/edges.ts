@@ -9,22 +9,32 @@ const GROW_MAX = 1.6 // 单条边可见爬行的最长时长（秒）
 const VERT = `
 attribute vec3 aColor;
 attribute float aAlpha;
+attribute float aFocus;
 varying vec3 vColor;
 varying float vAlpha;
+varying float vFocus;
 void main() {
   vColor = aColor;
   vAlpha = aAlpha;
+  vFocus = aFocus;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`
 
 const FRAG = `
 uniform float uOpacity;
+uniform float uFocusEnabled;
 varying vec3 vColor;
 varying float vAlpha;
+varying float vFocus;
 void main() {
   float a = vAlpha * uOpacity;
+  vec3 color = vColor;
+  if (uFocusEnabled > 0.5) {
+    a *= mix(0.12, 2.6, vFocus);
+    color = mix(vColor * 0.5, mix(vColor, vec3(1.0), 0.5), vFocus);
+  }
   if (a <= 0.001) discard;
-  gl_FragColor = vec4(vColor, a);
+  gl_FragColor = vec4(color, min(a, 1.0));
 }`
 
 interface EdgeRec { start: number; dur: number; base: number }
@@ -39,6 +49,10 @@ interface EdgeRec { start: number; dur: number; base: number }
  */
 export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
   lines: THREE.LineSegments
+  /** 环绕模式：突出悬停节点的直接前置边；无前置边时恢复普通显示 */
+  highlightPrereqs: (nodeIdx: number | null) => void
+  /** 锁定模式：突出目标及其所有上游节点的前置边 */
+  highlightTree: (nodeIndices: readonly number[] | null) => void
   /** 进入漫游：线全部隐去，等待按显现时刻生长 */
   beginTour: () => void
   /** 漫游中每帧推进（t 为漫游时钟，单调） */
@@ -52,12 +66,14 @@ export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
   const positions: number[] = []
   const colors: number[] = []
   const recs: EdgeRec[] = []
+  const incomingByTarget: number[][] = Array.from({ length: placed.length }, () => [])
   const p0 = new THREE.Vector3(), p1 = new THREE.Vector3()
   const mid = new THREE.Vector3(), ctrl = new THREE.Vector3(), axisPt = new THREE.Vector3()
   const a = new THREE.Vector3(), b = new THREE.Vector3()
 
   for (const node of placed) {
-    const arrive = revealAt[idxById.get(node.node.id)!]
+    const targetIdx = idxById.get(node.node.id)!
+    const arrive = revealAt[targetIdx]
     for (const prereqId of node.node.prereqs) {
       const from = byId.get(prereqId)
       if (!from) continue // 数据已验证无悬空，防御性跳过
@@ -85,6 +101,7 @@ export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
       // 实测前置→目标的间隔中位 13s、p90 55s，照原样爬肉眼看不出在动
       const span = Math.max(0, Math.min(arrive - revealAt[idxById.get(prereqId)!], GROW_MAX))
       recs.push({ start: arrive - span, dur: span, base })
+      incomingByTarget[targetIdx].push(recs.length - 1)
     }
   }
 
@@ -94,15 +111,44 @@ export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
   const alpha = new Float32Array(positions.length / 3).fill(1)
   const alphaAttr = new THREE.BufferAttribute(alpha, 1)
   geo.setAttribute('aAlpha', alphaAttr)
+  const focus = new Float32Array(alpha.length)
+  const focusAttr = new THREE.BufferAttribute(focus, 1)
+  geo.setAttribute('aFocus', focusAttr)
 
-  const lines = new THREE.LineSegments(geo, new THREE.ShaderMaterial({
-    uniforms: { uOpacity: { value: 0.3 } },
+  const material = new THREE.ShaderMaterial({
+    uniforms: { uOpacity: { value: 0.3 }, uFocusEnabled: { value: 0 } },
     vertexShader: VERT,
     fragmentShader: FRAG,
     transparent: true,
     depthWrite: false,
     blending: THREE.AdditiveBlending,
-  }))
+  })
+  const lines = new THREE.LineSegments(geo, material)
+
+  let focusedEdges = new Set<number>()
+  let lastHoverTarget: number | null | undefined
+  const highlightTargets = (targets: readonly number[], locked = false) => {
+    const next = new Set<number>()
+    for (const target of targets) {
+      for (const edge of incomingByTarget[target] ?? []) next.add(edge)
+    }
+    let dirty = false
+    for (const edge of focusedEdges) {
+      if (next.has(edge)) continue
+      const base = recs[edge].base
+      focus.fill(0, base, base + SEG * 2)
+      dirty = true
+    }
+    for (const edge of next) {
+      if (focusedEdges.has(edge)) continue
+      const base = recs[edge].base
+      focus.fill(1, base, base + SEG * 2)
+      dirty = true
+    }
+    focusedEdges = next
+    if (dirty) focusAttr.needsUpdate = true
+    material.uniforms.uFocusEnabled.value = locked || next.size > 0 ? 1 : 0
+  }
 
   // 0 = 未起笔，1 = 延伸中，2 = 已抵达。漫游时钟单调，故不需要回退
   const state = new Uint8Array(recs.length).fill(2)
@@ -124,6 +170,15 @@ export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
 
   return {
     lines,
+    highlightPrereqs: (nodeIdx: number | null) => {
+      if (nodeIdx === lastHoverTarget) return
+      lastHoverTarget = nodeIdx
+      highlightTargets(nodeIdx === null ? [] : [nodeIdx])
+    },
+    highlightTree: (nodeIndices: readonly number[] | null) => {
+      lastHoverTarget = undefined
+      highlightTargets(nodeIndices ?? [], nodeIndices !== null)
+    },
     beginTour: () => setAll(0, 0),
     update: (t: number) => {
       let dirty = false

@@ -137,6 +137,7 @@ const fog = scene.fog as THREE.Fog
 const FOG_BASE = { near: fog.near, far: fog.far }
 let shownEra = -2
 let shownFov = BASE_FOV
+let selectedRootIdx: number | null = null
 
 // 视场随"要看的圆盘"渐变；标签的像素换算依赖焦距，改 fov 必须同步
 function applyFov(fov: number) {
@@ -163,9 +164,12 @@ function setTouring(on: boolean) {
   fog.near = on ? 420 : FOG_BASE.near
   fog.far = on ? 2200 : FOG_BASE.far
   if (on) {
+    clearSelection()
     hoverIdx = null
+    field.highlight(null)
     shownEra = -2
     field.beginTour(plan.revealAt, 0)
+    edges.highlightPrereqs(null)
     edges.beginTour()
   } else {
     tooltip.classList.remove('show')
@@ -202,6 +206,55 @@ const tooltip = document.getElementById('tooltip')!
 const raycaster = new THREE.Raycaster()
 const ndc = new THREE.Vector2()
 let hoverIdx: number | null = null
+const nodeIndexById = new Map(placed.map((p, i) => [p.node.id, i]))
+
+function nodeIndexAt(clientX: number, clientY: number): number | null {
+  const rect = renderer.domElement.getBoundingClientRect()
+  ndc.set(
+    ((clientX - rect.left) / rect.width) * 2 - 1,
+    -((clientY - rect.top) / rect.height) * 2 + 1
+  )
+  raycaster.setFromCamera(ndc, camera)
+  const hit = raycaster.intersectObjects(field.meshes, false)[0]
+  return hit ? field.nodeIndexAt(hit.object, hit.instanceId!) : null
+}
+
+function prereqTreeFrom(rootIdx: number): number[] {
+  const seen = new Set<number>()
+  const pending = [rootIdx]
+  while (pending.length) {
+    const idx = pending.pop()!
+    if (seen.has(idx)) continue
+    seen.add(idx)
+    for (const id of placed[idx].node.prereqs) {
+      const prereqIdx = nodeIndexById.get(id)
+      if (prereqIdx !== undefined) pending.push(prereqIdx)
+    }
+  }
+  return [...seen]
+}
+
+function clearSelection() {
+  if (selectedRootIdx === null) return
+  selectedRootIdx = null
+  field.setTreeHighlight(null, null)
+  edges.highlightTree(null)
+  hoverIdx = null
+  tooltip.classList.remove('show')
+  renderer.domElement.style.cursor = ''
+}
+
+function selectNode(idx: number | null) {
+  if (idx === null || selectedRootIdx === idx) {
+    clearSelection()
+    return
+  }
+  const nodes = prereqTreeFrom(idx)
+  selectedRootIdx = idx
+  field.highlight(null)
+  field.setTreeHighlight(idx, new Set(nodes))
+  edges.highlightTree(nodes)
+}
 
 // 规范 §6：tooltip 同时显示"精确数值"与"真实精度"，避免把约定值读成确证
 function yearText(n: TechNode): string {
@@ -215,27 +268,17 @@ function yearText(n: TechNode): string {
 
 renderer.domElement.addEventListener('pointermove', e => {
   if (rig.mode === 'tour') return // 漫游中相机在动，悬停无意义
-  const rect = renderer.domElement.getBoundingClientRect()
-  ndc.set(
-    ((e.clientX - rect.left) / rect.width) * 2 - 1,
-    -((e.clientY - rect.top) / rect.height) * 2 + 1
-  )
-  raycaster.setFromCamera(ndc, camera)
-  const hits = raycaster.intersectObjects(field.meshes, false)
-
-  if (hits.length > 0) {
-    const h = hits[0]
-    const idx = field.nodeIndexAt(h.object, h.instanceId!)
-    if (idx !== null) {
-      hoverIdx = idx
-      const n = placed[idx].node
-      // 前置科技：显示名称（最多 4 个，避免溢出）
-      const prereqNames = n.prereqs
-        .map(id => TECH_BY_ID.get(id)?.name ?? '')
-        .filter(Boolean)
-        .slice(0, 4)
-        .join('、')
-      tooltip.innerHTML = `
+  const idx = nodeIndexAt(e.clientX, e.clientY)
+  if (idx !== null) {
+    hoverIdx = idx
+    const n = placed[idx].node
+    // 前置科技：显示名称（最多 4 个，避免溢出）
+    const prereqNames = n.prereqs
+      .map(id => TECH_BY_ID.get(id)?.name ?? '')
+      .filter(Boolean)
+      .slice(0, 4)
+      .join('、')
+    tooltip.innerHTML = `
         <div class="tt-name">${n.name}</div>
         <div class="tt-dim">${n.nameEn !== n.name ? n.nameEn + ' · ' : ''}${yearText(n)}</div>
         <div class="tt-dim">${ERA_INFO[n.era].name} · ${CATEGORY_NAMES[n.category]}${n.kind ? ' · ' + n.kind : ''}</div>
@@ -247,17 +290,37 @@ renderer.domElement.addEventListener('pointermove', e => {
               <a href="https://en.wikipedia.org/wiki/${encodeURIComponent(n.wikiEn)}" target="_blank" rel="noopener">${n.wikiEn}</a>
               （CC BY-SA 4.0）</div>`
           : ''}
-      `
-      tooltip.style.left = `${e.clientX + 16}px`
-      tooltip.style.top = `${e.clientY + 12}px`
-      tooltip.classList.add('show')
-      renderer.domElement.style.cursor = 'pointer'
-      return
-    }
+    `
+    tooltip.style.left = `${e.clientX + 16}px`
+    tooltip.style.top = `${e.clientY + 12}px`
+    tooltip.classList.add('show')
+    renderer.domElement.style.cursor = 'pointer'
+    return
   }
   hoverIdx = null
   tooltip.classList.remove('show')
   renderer.domElement.style.cursor = ''
+})
+renderer.domElement.addEventListener('pointerleave', () => {
+  hoverIdx = null
+  tooltip.classList.remove('show')
+  renderer.domElement.style.cursor = ''
+})
+
+// 鼠标拖拽只旋转视角；单击节点锁定整棵前置树，单击其余位置解除。
+let pointerDown: { x: number; y: number; button: number; wasTouring: boolean } | null = null
+document.addEventListener('pointerdown', e => {
+  pointerDown = { x: e.clientX, y: e.clientY, button: e.button, wasTouring: rig.mode === 'tour' }
+}, true)
+document.addEventListener('click', e => {
+  if (rig.mode === 'tour') return
+  if (e.target !== renderer.domElement) {
+    clearSelection()
+    return
+  }
+  if (!pointerDown || pointerDown.wasTouring || pointerDown.button !== 0 ||
+      Math.hypot(e.clientX - pointerDown.x, e.clientY - pointerDown.y) > 6) return
+  selectNode(nodeIndexAt(e.clientX, e.clientY))
 })
 
 // ───── 自适应窗口 ─────
@@ -291,7 +354,8 @@ function loop() {
     nameLabels.setTourNames(Math.max(0, plan.collectNames(t, nameIdx, nameAlpha)), nameIdx, nameAlpha)
   } else {
     field.update(time)
-    field.highlight(hoverIdx)
+    field.highlight(selectedRootIdx === null ? hoverIdx : null)
+    if (selectedRootIdx === null) edges.highlightPrereqs(hoverIdx)
     // 名称：仅完整在屏内的，按距离保留最近 limit 个
     nameLabels.update(camera, labelLimit, innerWidth, innerHeight)
   }
