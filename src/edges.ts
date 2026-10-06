@@ -11,22 +11,32 @@ const FOCUS_OPACITY = 0.62 // 聚焦时只剩子图那几十条，抬上来才�
 const VERT = `
 attribute vec3 aColor;
 attribute float aAlpha;
+attribute float aFocus;
 varying vec3 vColor;
 varying float vAlpha;
+varying float vFocus;
 void main() {
   vColor = aColor;
   vAlpha = aAlpha;
+  vFocus = aFocus;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }`
 
 const FRAG = `
 uniform float uOpacity;
+uniform float uFocusEnabled;
 varying vec3 vColor;
 varying float vAlpha;
+varying float vFocus;
 void main() {
   float a = vAlpha * uOpacity;
+  vec3 color = vColor;
+  if (uFocusEnabled > 0.5) {
+    a *= mix(0.12, 2.6, vFocus);
+    color = mix(vColor * 0.5, mix(vColor, vec3(1.0), 0.5), vFocus);
+  }
   if (a <= 0.001) discard;
-  gl_FragColor = vec4(vColor, a);
+  gl_FragColor = vec4(color, min(a, 1.0));
 }`
 
 interface EdgeRec { start: number; dur: number; base: number; from: number; to: number }
@@ -44,6 +54,8 @@ interface EdgeRec { start: number; dur: number; base: number; from: number; to: 
  */
 export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
   lines: THREE.LineSegments
+  /** 无点击聚焦时，突出悬停节点的可见直接前置边；不改变可见性遮罩。 */
+  highlightPrereqs: (nodeIdx: number | null) => void
   /** 进入漫游：线全部隐去，等待按显现时刻生长 */
   beginTour: () => void
   /** 漫游中每帧推进（t 为漫游时钟，单调） */
@@ -105,9 +117,12 @@ export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
   const alpha = new Float32Array(positions.length / 3).fill(1)
   const alphaAttr = new THREE.BufferAttribute(alpha, 1)
   geo.setAttribute('aAlpha', alphaAttr)
+  const focus = new Float32Array(alpha.length)
+  const focusAttr = new THREE.BufferAttribute(focus, 1)
+  geo.setAttribute('aFocus', focusAttr)
 
   const lines = new THREE.LineSegments(geo, new THREE.ShaderMaterial({
-    uniforms: { uOpacity: { value: 0.3 } },
+    uniforms: { uOpacity: { value: OPACITY }, uFocusEnabled: { value: 0 } },
     vertexShader: VERT,
     fragmentShader: FRAG,
     transparent: true,
@@ -119,6 +134,19 @@ export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
   const state = new Uint8Array(recs.length).fill(2)
   // 遮罩位：两端节点都在场才画，与漫游生长共用这一个乘子
   const vis = new Uint8Array(recs.length).fill(1)
+  let hoverTarget: number | null = null
+  const refreshHover = () => {
+    let any = false
+    for (let e = 0; e < recs.length; e++) {
+      const { base, to } = recs[e]
+      const highlighted = vis[e] !== 0 && to === hoverTarget
+      focus.fill(highlighted ? 1 : 0, base, base + SEG * 2)
+      any ||= highlighted
+    }
+    focusAttr.needsUpdate = true
+    const material = lines.material as THREE.ShaderMaterial
+    material.uniforms.uFocusEnabled.value = any ? 1 : 0
+  }
 
   const writeEdge = (e: number, p: number) => {
     const base = recs[e].base
@@ -138,7 +166,12 @@ export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
 
   return {
     lines,
-    beginTour: () => { state.fill(0); redraw() },
+    highlightPrereqs: (nodeIdx: number | null) => {
+      if (nodeIdx === hoverTarget) return
+      hoverTarget = nodeIdx
+      refreshHover()
+    },
+    beginTour: () => { hoverTarget = null; refreshHover(); state.fill(0); redraw() },
     update: (t: number) => {
       let dirty = false
       for (let e = 0; e < recs.length; e++) {
@@ -159,6 +192,7 @@ export function buildEdges(placed: PlacedNode[], revealAt: Float32Array): {
         vis[e] = !active || (active[from] && active[to]) ? 1 : 0
       }
       redraw() // 遮罩只在环绕模式下变更（漫游中图例不可点），故不必保留生长进度
+      refreshHover()
     },
     setEmphasis: (on: boolean) => {
       (lines.material as THREE.ShaderMaterial).uniforms.uOpacity.value = on ? FOCUS_OPACITY : OPACITY

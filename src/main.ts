@@ -9,7 +9,7 @@ import { buildEdges, buildEraRings } from './edges'
 import { buildNameLabels, buildEraLabels, updateLabelFocal, setLabelMinPxAll } from './labels'
 import { CameraRig } from './controls'
 import { TourPlan, BLEND } from './tour'
-import { buildGraph, kHopDepth } from './graph'
+import { buildGraph, kHopDepth, prereqFocus } from './graph'
 
 // ───── 数据与布局 ─────
 const { placed, eraRadii, eraY, towerHeight } = layoutTower(TECHS)
@@ -98,6 +98,7 @@ const hiddenCats = new Set<number>()
 const activeKinds = new Set<string>()
 let soloImp: number | null = null // 独显某档重要度（null = 不限档）
 let selected: number | null = null
+let selectionMode: 'nearby' | 'prereqs' = 'nearby'
 const focusBuf = new Int8Array(placed.length)
 let focusDepth: Int8Array | null = null
 const nodeVis = new Uint8Array(placed.length).fill(1) // 1 = 在场（未被隐藏）
@@ -150,6 +151,7 @@ function applyVisualState() {
   nameLabels.setFocus(focusDepth)
   edges.setActive(edgeActive)
   edges.setEmphasis(focusDepth !== null) // 聚焦时子图的线提亮
+  if (focusDepth) edges.highlightPrereqs(null)
 }
 
 legend.addEventListener('click', e => {
@@ -303,13 +305,16 @@ function pickAt(clientX: number, clientY: number): number | null {
   return null
 }
 
-function selectNode(idx: number | null) {
-  if (idx === null || idx === selected) {
+function selectNode(idx: number | null, mode: 'nearby' | 'prereqs' = 'nearby') {
+  if (idx === null || (idx === selected && mode === selectionMode)) {
     selected = null
     focusDepth = null
   } else {
     selected = idx
-    focusDepth = kHopDepth(graph, idx, FOCUS_HOPS, focusBuf)
+    selectionMode = mode
+    focusDepth = mode === 'prereqs'
+      ? prereqFocus(graph, idx, focusBuf)
+      : kHopDepth(graph, idx, FOCUS_HOPS, focusBuf)
   }
   applyVisualState()
 }
@@ -331,9 +336,9 @@ renderer.domElement.addEventListener('pointermove', e => {
     .slice(0, 4)
     .join('、')
   const link = selected === null ? '' : selected === idx
-    ? `<div class="tt-dim">已聚焦：与其相连的两跳内科技</div>`
+    ? `<div class="tt-dim">已聚焦：${selectionMode === 'prereqs' ? '全部上游前置科技' : '与其相连的两跳内科技'}</div>`
     : focusDepth && focusDepth[idx] >= 0
-      ? `<div class="tt-dim">在聚焦范围内（${focusDepth[idx]} 跳）</div>` : ''
+      ? `<div class="tt-dim">${selectionMode === 'prereqs' ? '属于上游前置树' : `在聚焦范围内（${focusDepth[idx]} 跳）`}</div>` : ''
   tooltip.innerHTML = `
     <div class="tt-name">${n.name}</div>
     <div class="tt-dim">${n.nameEn !== n.name ? n.nameEn + ' · ' : ''}${yearText(n)}</div>
@@ -354,17 +359,28 @@ renderer.domElement.addEventListener('pointermove', e => {
   renderer.domElement.style.cursor = 'pointer'
 })
 
-// 点击：位移与时长都很小才算"点选"，否则那是拖动转视角
-let downX = 0, downY = 0, downT = 0
+renderer.domElement.addEventListener('pointerleave', () => {
+  hoverIdx = null
+  tooltip.classList.remove('show')
+  renderer.domElement.style.cursor = ''
+})
+
+// 普通点击保留两跳聚焦，Shift + 点击锁定完整前置树；拖动与退出漫游不触发选择。
+let pointerDown: { x: number; y: number; time: number; id: number; wasTouring: boolean } | null = null
 renderer.domElement.addEventListener('pointerdown', e => {
-  downX = e.clientX; downY = e.clientY; downT = performance.now()
-})
+  pointerDown = e.button === 0
+    ? { x: e.clientX, y: e.clientY, time: performance.now(), id: e.pointerId, wasTouring: rig.mode === 'tour' }
+    : null
+}, true)
 renderer.domElement.addEventListener('pointerup', e => {
-  if (e.button !== 0 || rig.mode === 'tour') return
-  if (Math.hypot(e.clientX - downX, e.clientY - downY) > 5) return
-  if (performance.now() - downT > 400) return
-  selectNode(pickAt(e.clientX, e.clientY)) // 点空白 = 取消聚焦
+  const down = pointerDown
+  pointerDown = null
+  if (!down || down.id !== e.pointerId || down.wasTouring || e.button !== 0 || rig.mode === 'tour') return
+  if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) return
+  if (performance.now() - down.time > 400) return
+  selectNode(pickAt(e.clientX, e.clientY), e.shiftKey ? 'prereqs' : 'nearby')
 })
+renderer.domElement.addEventListener('pointercancel', () => { pointerDown = null })
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape' && selected !== null) selectNode(null)
 })
@@ -404,6 +420,7 @@ function loop() {
   } else {
     field.update(time)
     field.highlight(hoverIdx)
+    edges.highlightPrereqs(selected === null ? hoverIdx : null)
     // 名称：仅完整在屏内的，按距离保留最近 limit 个
     nameLabels.update(camera, labelLimit, innerWidth, innerHeight)
   }

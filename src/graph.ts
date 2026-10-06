@@ -1,4 +1,4 @@
-// 依赖图：点击聚焦与连线遮罩的唯一算子。
+// 依赖图：两跳关联与完整前置树聚焦共用的图结构。
 // 只走画面上真实存在的弧线（prereqs），related 字段一条线都没画，参与高亮会自相矛盾。
 // 索引空间与 layout.placed 一致，不引 three、不读 JSON，便于用 node 直接跑断言。
 
@@ -28,6 +28,23 @@ export function buildGraph(ids: string[], prereqs: string[][]): DepGraph {
 }
 
 export const NOT_RELATED = -1
+
+/** 完整上游前置集：0 = 自身、1 = 任意层前置、-1 = 集外（不是跳数，深链不会溢出）。 */
+export function prereqFocus(g: DepGraph, start: number, out: Int8Array): Int8Array {
+  const incoming: number[][] = Array.from({ length: g.count }, () => [])
+  for (const { from, to } of g.edges) incoming[to].push(from)
+  out.fill(NOT_RELATED)
+  out[start] = 0
+  const pending = [start]
+  while (pending.length) {
+    for (const from of incoming[pending.pop()!]) {
+      if (out[from] !== NOT_RELATED) continue
+      out[from] = 1
+      pending.push(from)
+    }
+  }
+  return out
+}
 
 /**
  * 从 start 沿连线走 maxHops 步，写入 out 并返回：0 = 自身、1..maxHops = 跳数、

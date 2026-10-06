@@ -22,7 +22,8 @@
 ### 交互
 
 - 左键拖拽旋转 · 滚轮缩放 · 右键平移
-- 悬停节点：中英文名、年份、时代、领域、重要度星级、前置科技、简介
+- 悬停节点：中英文名、年份、时代、领域、重要度星级、前置科技、简介；未聚焦时突出可见的直接前置连线
+- 单击节点：聚焦两跳内的关联科技；Shift＋单击节点：锁定全部上游前置节点与连线。再次以同样方式点击目标、单击画布空白或按 Esc 解除；领域、kind 与重要度筛选仍然生效
 - `▶ 漫游动画`：画面只留时代名与科技名。相机沿中轴线上升、视线全程完全朝下（实测仰角恒 −90.00°），绕视轴以 1.72°/s 缓慢滚转；它固定领先正显现层 130 单位，**视场按"要看的圆盘"大小逐帧反推并渐变**（实测 45.6°~109.0°，每 0.25s 变化 ≤0.76°），所以小时代收得不广角、大时代自动拉宽，11/11 层的单帧可见覆盖 100%。实测无任何采样点出现"已显现节点高过摄像机"，即显现中的科技不会被遮挡，未到达时代的圆盘与时代名同时隐去。各时代按科技数分配 10~30 秒（全片约 3 分钟），时代内科技按 year 逐个显现（弹入冲到 2.5 倍并闪白 13×，0.5 秒后回落，名字停 2 秒）；连线从前置显现时起笔朝目标爬行（爬行压缩到 1.6 秒内完成，同时爬行的边从 973 降到 56），**抵达那一刻正好是目标科技显现的时刻**。Esc 或点击画面退出
 - 图例中的滑块：控制在画面里显示多少个节点名称（按到相机的距离取最近 N 个）
 
@@ -84,7 +85,7 @@ A freely rotatable "tower of technology": every technology humans ever invented 
 - **Face count = importance.** 20 faces for cornerstone technologies down to 4 for long-tail entries; node size follows the same scale.
 - **Layer radius = density.** Eras with more recorded technologies bulge outward, which is why the modern section reads as an explosion.
 
-Interactions: drag to orbit, wheel to zoom, right-drag to pan, hover a node for its card (bilingual name, year, era, domain, importance, prerequisites, summary), and press the tour button to fly the camera up through the eras.
+Interactions: drag to orbit, wheel to zoom, right-drag to pan, and hover a node for its card and visible incoming prerequisite edges. Click a node to focus its two-hop neighborhood, or Shift-click to focus its full upstream prerequisite tree. Repeat the same click on the target, click blank canvas, or press Esc to clear the focus. Domain, kind, and importance filters still apply. Press the tour button to fly the camera up through the eras.
 
 Built with TypeScript, three.js and Vite. No backend and no runtime network calls — the dataset is bundled at build time, so the site is a set of static files.
 
@@ -106,4 +107,3 @@ Licensing is split in two, and both files are in effect:
 * **Data** (`data/`): structured fields (year, era, category, kind, importance, dependencies) under [CC BY 4.0](LICENSE-data.md); the Chinese `desc` summaries carry text derived from English Wikipedia and are therefore offered under **CC BY-SA 4.0** with attribution, since Wikipedia's licence is share-alike and translation counts as a derivative. `wikiEn` names the source article for each entry.
 
 Reuse of the dataset means reading `LICENSE-data.md`: CC BY for the structure, CC BY-SA for the summaries.
-
