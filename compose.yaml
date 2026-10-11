@@ -1,0 +1,24 @@
+# 与 Dockerfile 的 HEALTHCHECK、docker/smoke.sh 的运行参数保持一致。
+# 站点是静态文件，容器不读取 .env。
+
+services:
+  web:
+    build: .
+    image: polytech-tree:local
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp:rw,nosuid,nodev,noexec,size=16m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 3s

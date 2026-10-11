@@ -1,0 +1,15 @@
+.git
+.github
+node_modules
+dist
+.env
+.env.*
+!.env.example
+.netlify
+.trae
+docs
+**/.DS_Store
+*.log
+**/__pycache__
+*.pyc
+*.bak-*

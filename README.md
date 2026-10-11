@@ -37,6 +37,26 @@ npm run validate   # 校验 data/ 下的数据（见 CONTRIBUTING.md）
 
 需要 Node.js 18+ 和 Python 3（仅 `validate` 用到）。
 
+### 容器
+
+镜像是多阶段构建：Node 22 里跑数据校验和 `npm run build`，运行阶段用非 root 的 nginx 在 **8080** 提供 `dist/`。没有后端，容器也不读 `.env`。
+
+```bash
+docker compose up --build
+# 浏览器打开 http://localhost:8080
+```
+
+只构建并运行镜像：
+
+```bash
+docker build -t polytech-tree .
+docker run --rm -p 8080:8080 polytech-tree
+```
+
+`compose.yaml` 把根文件系统设成只读，并丢掉全部 Linux capabilities。健康检查访问 `/healthz`。改完容器文件可以用 `bash docker/smoke.sh polytech-tree:local` 做一次冒烟（先 `docker build -t polytech-tree:local .`）。
+
+镜像里的页面包已经包含 `data/`。再分发镜像时，数据许可仍然有效：结构化字段是 CC BY 4.0，中文摘要里源自英文维基的部分是 CC BY-SA 4.0。代码部分仍是 MIT。
+
 ### 项目结构
 
 ```
@@ -87,6 +107,14 @@ A freely rotatable "tower of technology": every technology humans ever invented 
 Interactions: drag to orbit, wheel to zoom, right-drag to pan, hover a node for its card (bilingual name, year, era, domain, importance, prerequisites, summary), and press the tour button to fly the camera up through the eras.
 
 Built with TypeScript, three.js and Vite. No backend and no runtime network calls — the dataset is bundled at build time, so the site is a set of static files.
+
+### Container
+
+```bash
+docker compose up --build    # http://localhost:8080
+```
+
+The image builds with Node 22 (`npm ci`, data validation, `tsc` + Vite) and serves `dist/` from nginx as uid 101 on port 8080. `compose.yaml` runs it with a read-only root filesystem and no Linux capabilities. The image does not read `.env`. Redistributing the image still means following the data licences below, because the dataset is inside the bundle.
 
 The dataset lives in plain JSON files under `data/`, so adding a technology, an era or a domain is a pull request away. See [CONTRIBUTING.md](CONTRIBUTING.md).
 

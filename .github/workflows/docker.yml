@@ -1,0 +1,24 @@
+name: 容器镜像
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 构建镜像
+        run: docker build -t polytech-tree:ci .
+
+      - name: 校验 compose 文件
+        run: docker compose -f compose.yaml config --quiet
+
+      - name: 冒烟测试
+        run: bash docker/smoke.sh polytech-tree:ci
